@@ -74,13 +74,15 @@ impl AppManager {
         }
         println!("[kernel] Loading app_{}", app_id);
         // clear app area
-        core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, APP_SIZE_LIMIT).fill(0);
-        let app_src = core::slice::from_raw_parts(
-            self.app_start[app_id] as *const u8,
-            self.app_start[app_id + 1] - self.app_start[app_id],
-        );
-        let app_dst = core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, app_src.len());
-        app_dst.copy_from_slice(app_src);
+        unsafe {
+            core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, APP_SIZE_LIMIT).fill(0);
+            let app_src = core::slice::from_raw_parts(
+                self.app_start[app_id] as *const u8,
+                self.app_start[app_id + 1] - self.app_start[app_id],
+            );
+            let app_dst = core::slice::from_raw_parts_mut(APP_BASE_ADDRESS as *mut u8, app_src.len());
+            app_dst.copy_from_slice(app_src);
+        }
         // Memory fence about fetching the instruction memory
         // It is guaranteed that a subsequent instruction fetch must
         // observes all previous writes to the instruction memory.
