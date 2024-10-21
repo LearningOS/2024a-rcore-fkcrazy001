@@ -56,7 +56,8 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
-            task_info:TaskInfo::zero_init(),
+            task_syscall_times: [0; MAX_SYSCALL_NUM],
+            task_time: 0,
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -83,7 +84,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
-        task0.task_info.time = get_time_ms();
+        task0.task_time = get_time_ms();
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -126,9 +127,8 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
-            if inner.tasks[next].task_info.time == 0 {
-                inner.tasks[next].task_info.time = get_time_ms();
-            }
+            inner.tasks[current].task_time = get_time_ms() - inner.tasks[current].task_time;
+            inner.tasks[next].task_time = get_time_ms();
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -141,6 +141,11 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    fn update_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_syscall_times[syscall_id] += 1;
     }
 }
 
@@ -182,16 +187,16 @@ pub fn task_info_syscall_add(syscall_id:usize)  {
     if syscall_id >= MAX_SYSCALL_NUM {
         return;
     }
-    let mut inner = TASK_MANAGER.inner.exclusive_access();
-    let current = inner.current_task;
-    inner.tasks[current].task_info.syscall_times[syscall_id]+=1;
+    TASK_MANAGER.update_syscall_times(syscall_id);
 }
 
 /// get current task info
-pub fn get_current_task_info()-> TaskInfo {
+pub fn get_current_task_info(ti: *mut TaskInfo) {
     let inner = TASK_MANAGER.inner.exclusive_access();
-    let current = inner.current_task;
-    let mut a = inner.tasks[current].task_info;
-    a.time = get_time_ms() - a.time;
-    a
+    // let current = inner.current_task;
+    unsafe{
+        (*ti).time =  inner.tasks[inner.current_task].task_time;
+        (*ti).syscall_times = inner.tasks[inner.current_task].task_syscall_times;
+        (*ti).status = inner.tasks[inner.current_task].task_status;
+    }
 }

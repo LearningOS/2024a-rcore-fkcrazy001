@@ -72,8 +72,6 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     if ti.is_null() {
         return  -1;
     }
-    unsafe {
-        *ti=get_current_task_info();   
-    }
+    get_current_task_info(ti);
     0
 }

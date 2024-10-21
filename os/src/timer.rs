@@ -26,7 +26,11 @@ pub fn get_time_ms() -> usize {
 /// get current time in microseconds
 #[allow(dead_code)]
 pub fn get_time_us() -> usize {
-    time::read() * MICRO_PER_SEC / CLOCK_FREQ
+    let a = time::read();
+    // println!("a={}",a);
+    let b = a * MICRO_PER_SEC / CLOCK_FREQ;
+    // println!("b={}",b);
+    b
 }
 
 /// Set the next timer interrupt
