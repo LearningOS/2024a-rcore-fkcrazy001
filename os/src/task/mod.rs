@@ -127,8 +127,10 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
-            inner.tasks[current].task_time = get_time_ms() - inner.tasks[current].task_time;
-            inner.tasks[next].task_time = get_time_ms();
+            // inner.tasks[current].task_time = get_time_ms() - inner.tasks[current].task_time;
+            if inner.tasks[next].task_time == 0 {
+                inner.tasks[next].task_time = get_time_ms();
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -195,7 +197,7 @@ pub fn get_current_task_info(ti: *mut TaskInfo) {
     let inner = TASK_MANAGER.inner.exclusive_access();
     // let current = inner.current_task;
     unsafe{
-        (*ti).time =  inner.tasks[inner.current_task].task_time;
+        (*ti).time =  get_time_ms() - inner.tasks[inner.current_task].task_time;
         (*ti).syscall_times = inner.tasks[inner.current_task].task_syscall_times;
         (*ti).status = inner.tasks[inner.current_task].task_status;
     }
