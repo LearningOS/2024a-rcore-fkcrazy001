@@ -16,12 +16,15 @@ mod task;
 
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
+use crate::syscall::process::TaskInfo;
+use crate::mm::{page_table::PageTable, address::{VirtPageNum, VirtAddr, VPNRange}};
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -80,6 +83,7 @@ impl TaskManager {
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
+        next_task.record_first_sched_time();
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -141,6 +145,7 @@ impl TaskManager {
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
+            inner.tasks[next].record_first_sched_time();
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             drop(inner);
@@ -201,4 +206,44 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// record current task syscall info
+pub fn record_syscall_info(syscall_id:usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    inner.tasks[current].record_syscall_info(syscall_id);
+}
+
+/// get current task info
+pub fn get_task_info(taskinfo: &mut TaskInfo) {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let ctx = &inner.tasks[current];
+    taskinfo.time = get_time_ms() - ctx.run_time;
+    taskinfo.syscall_times.copy_from_slice(&ctx.syscall_times[..]);
+    taskinfo.status = TaskStatus::Running;
+}
+
+/// current task va -> pa
+pub fn va2mut_pa<T>(va: usize) -> Option<&'static mut T> {
+    // get current task user page table
+    let page_table = PageTable::from_token(current_user_token());
+    let va: VirtAddr = va.into();
+    let offset = va.page_offset();
+    let mut first:Option<&'static mut T> = None;
+    for vpn in VPNRange::new(va.floor(), va.ceil()) {
+        if let Some(pte) = page_table.translate(vpn) {
+            if let None = first  {
+                first = Some(
+                    unsafe {
+                        pte.ppn().get_mut() as *mut _ as usize + offset as *mut *_ as &'static mut T 
+                    })
+            }
+        } else {
+            return None;
+        }
+    }
+
+    first
 }
