@@ -1,9 +1,11 @@
 //! Process management syscalls
+use core::mem::size_of;
+
 use crate::{
     config::MAX_SYSCALL_NUM,
     task::{
-        change_program_brk, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, TaskStatus
-    },
+        change_program_brk, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, va2mut_pa, TaskStatus
+    }, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -46,7 +48,10 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    if let Some(pa_ts) = va2mut_pa::<TimeVal>(_ts as usize, size_of::<TimeVal>()) {
+        let a = get_time_us();
+        pa_ts.usec = a / 
+    }
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -55,7 +60,12 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
     // user_va -> pa
-    0
+    if let Some(pa_info) = va2mut_pa(_ti as usize, size_of::<TaskInfo>()) {
+        get_task_info(pa_info);
+        0
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement mmap.

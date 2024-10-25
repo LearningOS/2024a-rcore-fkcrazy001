@@ -24,7 +24,7 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 use crate::syscall::process::TaskInfo;
-use crate::mm::{page_table::PageTable, address::{VirtPageNum, VirtAddr, VPNRange}};
+use crate::mm::{page_table::PageTable, address::VirtAddr};
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -225,25 +225,25 @@ pub fn get_task_info(taskinfo: &mut TaskInfo) {
     taskinfo.status = TaskStatus::Running;
 }
 
-/// current task va -> pa
-pub fn va2mut_pa<T>(va: usize) -> Option<&'static mut T> {
+/// current task va -> pa, [va, len+va) must within one page
+pub fn va2mut_pa<T>(va: usize, len:usize) -> Option<&'static mut T> {
     // get current task user page table
     let page_table = PageTable::from_token(current_user_token());
-    let va: VirtAddr = va.into();
-    let offset = va.page_offset();
-    let mut first:Option<&'static mut T> = None;
-    for vpn in VPNRange::new(va.floor(), va.ceil()) {
-        if let Some(pte) = page_table.translate(vpn) {
-            if let None = first  {
-                first = Some(
-                    unsafe {
-                        pte.ppn().get_mut() as *mut _ as usize + offset as *mut *_ as &'static mut T 
-                    })
-            }
-        } else {
-            return None;
-        }
+    let start_va: VirtAddr = va.into();
+    let offset = start_va.page_offset();
+    let end_va:VirtAddr = (va+len).into();
+    if end_va.floor() != start_va.floor() {
+        return  None;
     }
-
-    first
+    let vpn = start_va.floor();
+    if let Some(pte) = page_table.translate(vpn ){
+        let mut a= pte.ppn().get_bytes_array().as_mut_ptr() as usize;
+        a += offset;
+        let raw = a as *mut T;
+        Some(unsafe {
+            & mut *raw   
+        })
+    } else {
+        None
+    }
 }
