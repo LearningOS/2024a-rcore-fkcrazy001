@@ -15,10 +15,13 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::address::VPNRange;
+use crate::mm::page_table::PTEFlags;
+use crate::mm::{MapPermission, PhysAddr};
 use crate::sync::UPSafeCell;
 use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
-use alloc::vec::Vec;
+use alloc::vec::{self, Vec};
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -246,4 +249,26 @@ pub fn va2mut_pa<T>(va: usize, len:usize) -> Option<&'static mut T> {
     } else {
         None
     }
+}
+
+/// try to map va to pa on current task
+pub fn try_map_va_range(range: VPNRange, perm:MapPermission) -> Result<(),()> {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let mm_set = &mut inner.tasks[current].memory_set;
+    for vpn in range {
+        if mm_set.translate(vpn).is_some() {
+            return Err(());
+        }
+    }
+    mm_set.insert_framed_area(range.get_start().into(), range.get_end().into(), perm);
+    Ok(())
+}
+
+/// try to unmap va  on current task
+pub fn try_unmap_va_range(range: VPNRange) -> Result<(),()> {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current = inner.current_task;
+    let mm_set = &mut inner.tasks[current].memory_set;
+
 }

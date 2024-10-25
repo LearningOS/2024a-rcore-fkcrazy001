@@ -2,10 +2,9 @@
 use core::mem::size_of;
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
-    task::{
-        change_program_brk, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, va2mut_pa, TaskStatus
-    }, timer::get_time_us,
+    config::MAX_SYSCALL_NUM, mm::{page_table::PTEFlags, VirtAddr, address::VPNRange}, task::{
+        change_program_brk, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, try_map_va_range, va2mut_pa, TaskStatus
+    }, timer::get_time_us
 };
 
 #[repr(C)]
@@ -50,7 +49,11 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
     if let Some(pa_ts) = va2mut_pa::<TimeVal>(_ts as usize, size_of::<TimeVal>()) {
         let a = get_time_us();
-        pa_ts.usec = a / 
+        pa_ts.sec = a / 1_000_000;
+        pa_ts.usec = a % 1_000_000;
+        0
+    } else {
+        -1
     }
 }
 
@@ -58,9 +61,9 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
+    trace!("kernel: sys_task_info");
     // user_va -> pa
-    if let Some(pa_info) = va2mut_pa(_ti as usize, size_of::<TaskInfo>()) {
+    if let Some(pa_info) = va2mut_pa::<TaskInfo>(_ti as usize, size_of::<TaskInfo>()) {
         get_task_info(pa_info);
         0
     } else {
@@ -71,7 +74,28 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    if (_port & (!0x7)) != 0 || _port & 0x7 == 0 {
+        return -1;
+    }
+    let start_va:VirtAddr = _start.into();
+    if start_va.page_offset() != 0 {
+        return -1;
+    }
+    let end_va:VirtAddr = (_start + _len).into();
+    let mut pte_flag = PTEFlags::U;
+    if _port & 0x1 != 0 {
+        pte_flag |= PTEFlags::R;
+    }
+    if _port & 0x2 != 0 {
+        pte_flag |= PTEFlags::W;
+    }
+    if _port &0x4 != 0 {
+        pte_flag |= PTEFlags::X;
+    }
+    match try_map_va_range(VPNRange::new(start_va.floor(),end_va.ceil()), pte_flag) {
+        Ok(_) => 0,
+        _ => -1,
+    }
 }
 
 /// YOUR JOB: Implement munmap.
