@@ -105,11 +105,11 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     }
     match try_map_va_range(start_va, end_va, mpflag) {
         Ok(_) => {
-            println!("map {:?} -> {:?} OK", start_va, end_va);
+            // println!("map {:?} -> {:?} OK", start_va, end_va);
             0
         }
-        Err(e) => {
-            println!("map {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
+        Err(_) => {
+            // println!("map {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
             -1
         }
     }
@@ -126,11 +126,11 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     let end_va = end_va.ceil().into();
     match try_unmap_va_range(start_va, end_va) {
         Ok(_) => {
-            println!("unmap {:?} -> {:?} OK", start_va, end_va);
+            // println!("unmap {:?} -> {:?} OK", start_va, end_va);
             0
         }
-        Err(e) => {
-            println!("unmap {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
+        Err(_) => {
+            // println!("unmap {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
             -1
         }
     }
