@@ -2,9 +2,9 @@
 use core::mem::size_of;
 
 use crate::{
-    config::MAX_SYSCALL_NUM, mm::{page_table::PTEFlags, VirtAddr, address::VPNRange}, task::{
-        change_program_brk, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, try_map_va_range, va2mut_pa, TaskStatus
-    }, timer::get_time_us
+    config::MAX_SYSCALL_NUM, mm::{MapPermission, VirtAddr}, task::{
+        change_program_brk, copy_km_to_va, exit_current_and_run_next, get_task_info, suspend_current_and_run_next, try_map_va_range, try_unmap_va_range, TaskStatus
+    }, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -28,6 +28,16 @@ pub struct TaskInfo {
     pub time: usize,
 }
 
+impl TaskInfo {
+    fn new()->Self {
+        Self{
+            status:TaskStatus::Running,
+            syscall_times:[0;MAX_SYSCALL_NUM],
+            time:0,
+        }
+    }
+}
+
 /// task exits and submit an exit code
 pub fn sys_exit(_exit_code: i32) -> ! {
     trace!("kernel: sys_exit");
@@ -47,14 +57,13 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    if let Some(pa_ts) = va2mut_pa::<TimeVal>(_ts as usize, size_of::<TimeVal>()) {
-        let a = get_time_us();
-        pa_ts.sec = a / 1_000_000;
-        pa_ts.usec = a % 1_000_000;
-        0
-    } else {
-        -1
-    }
+    let utime = get_time_us();
+    let time = TimeVal {
+        usec: utime % 1_000_000,
+        sec:utime/1_000_000,
+    };
+    copy_km_to_va(&time, unsafe{&mut *_ts as &mut TimeVal}, size_of::<TimeVal>());
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -63,12 +72,12 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!("kernel: sys_task_info");
     // user_va -> pa
-    if let Some(pa_info) = va2mut_pa::<TaskInfo>(_ti as usize, size_of::<TaskInfo>()) {
-        get_task_info(pa_info);
-        0
-    } else {
-        -1
-    }
+    let mut kti = TaskInfo::new();
+    get_task_info(&mut kti);
+    copy_km_to_va(&kti, unsafe {
+        &mut *_ti as &mut TaskInfo
+    }, size_of::<TaskInfo>());
+    0
 }
 
 /// YOUR JOB: Implement mmap.
@@ -82,26 +91,49 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         return -1;
     }
     let end_va:VirtAddr = (_start + _len).into();
-    let mut pte_flag = PTEFlags::U;
+    let end_va = end_va.ceil().into();
+    // println!("map {} to {}", _start, _start+_len);
+    let mut mpflag = MapPermission::U;
     if _port & 0x1 != 0 {
-        pte_flag |= PTEFlags::R;
+        mpflag |= MapPermission::R;
     }
     if _port & 0x2 != 0 {
-        pte_flag |= PTEFlags::W;
+        mpflag |= MapPermission::W;
     }
     if _port &0x4 != 0 {
-        pte_flag |= PTEFlags::X;
+        mpflag |= MapPermission::X;
     }
-    match try_map_va_range(VPNRange::new(start_va.floor(),end_va.ceil()), pte_flag) {
-        Ok(_) => 0,
-        _ => -1,
+    match try_map_va_range(start_va, end_va, mpflag) {
+        Ok(_) => {
+            println!("map {:?} -> {:?} OK", start_va, end_va);
+            0
+        }
+        Err(e) => {
+            println!("map {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
+            -1
+        }
     }
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    let start_va:VirtAddr = _start.into();
+    if start_va.page_offset() != 0 {
+        return -1;
+    }
+    let end_va:VirtAddr = (_start + _len).into();
+    let end_va = end_va.ceil().into();
+    match try_unmap_va_range(start_va, end_va) {
+        Ok(_) => {
+            println!("unmap {:?} -> {:?} OK", start_va, end_va);
+            0
+        }
+        Err(e) => {
+            println!("unmap {:?} -> {:?} FAILED, failed addr: {:?}", start_va, end_va, e);
+            -1
+        }
+    }
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

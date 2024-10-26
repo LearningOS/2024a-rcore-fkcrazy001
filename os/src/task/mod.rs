@@ -16,18 +16,16 @@ mod task;
 
 use crate::loader::{get_app_data, get_num_app};
 use crate::mm::address::VPNRange;
-use crate::mm::page_table::PTEFlags;
-use crate::mm::{MapPermission, PhysAddr};
+use crate::mm::{translated_byte_buffer, MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
-use alloc::vec::{self, Vec};
+use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 use crate::syscall::process::TaskInfo;
-use crate::mm::{page_table::PageTable, address::VirtAddr};
 pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
@@ -228,47 +226,63 @@ pub fn get_task_info(taskinfo: &mut TaskInfo) {
     taskinfo.status = TaskStatus::Running;
 }
 
-/// current task va -> pa, [va, len+va) must within one page
-pub fn va2mut_pa<T>(va: usize, len:usize) -> Option<&'static mut T> {
-    // get current task user page table
-    let page_table = PageTable::from_token(current_user_token());
-    let start_va: VirtAddr = va.into();
-    let offset = start_va.page_offset();
-    let end_va:VirtAddr = (va+len).into();
-    if end_va.floor() != start_va.floor() {
-        return  None;
-    }
-    let vpn = start_va.floor();
-    if let Some(pte) = page_table.translate(vpn ){
-        let mut a= pte.ppn().get_bytes_array().as_mut_ptr() as usize;
-        a += offset;
-        let raw = a as *mut T;
-        Some(unsafe {
-            & mut *raw   
-        })
-    } else {
-        None
-    }
-}
-
 /// try to map va to pa on current task
-pub fn try_map_va_range(range: VPNRange, perm:MapPermission) -> Result<(),()> {
+pub fn try_map_va_range(start_va: VirtAddr, end_va: VirtAddr, perm:MapPermission) -> Result<(),VirtAddr> {
     let mut inner = TASK_MANAGER.inner.exclusive_access();
     let current = inner.current_task;
     let mm_set = &mut inner.tasks[current].memory_set;
-    for vpn in range {
-        if mm_set.translate(vpn).is_some() {
-            return Err(());
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        if let Some(e) = mm_set.translate(vpn) {
+            if e.is_valid() {
+                println!("{:?}", vpn);
+                return Err(VirtAddr::from(vpn));
+            }
         }
     }
-    mm_set.insert_framed_area(range.get_start().into(), range.get_end().into(), perm);
+    mm_set.insert_framed_area(start_va, end_va, perm);
+    // println!("map {:?} -> {:?}", start_va, end_va);
     Ok(())
 }
 
 /// try to unmap va  on current task
-pub fn try_unmap_va_range(range: VPNRange) -> Result<(),()> {
+pub fn try_unmap_va_range(start_va: VirtAddr, end_va: VirtAddr) -> Result<(),VirtAddr> {
     let mut inner = TASK_MANAGER.inner.exclusive_access();
     let current = inner.current_task;
     let mm_set = &mut inner.tasks[current].memory_set;
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        match mm_set.translate(vpn) {
+            Some(e) => {
+                if !e.is_valid() {
+                  return Err(vpn.into());
+                }
+            },
+            None => {return Err(vpn.into());}
+        }
+    }
+    if mm_set.shrink_to(start_va, start_va) {
+        Ok(())
+    } else {
+        Err(start_va)
+    }
+}
 
+/// copy kernel mem to user va
+pub fn copy_km_to_va<T>(km :&T, va: &mut T, len: usize) {
+    let src_ptr:*const u8 = unsafe {
+        core::mem::transmute(km)
+    };
+    let dst_ptr:*const u8 = unsafe {
+        core::mem::transmute(va)
+    };
+    // panic if translate failed
+    let buffers = translated_byte_buffer(current_user_token(), dst_ptr, len);
+    let mut offset = 0;
+    for buf in buffers {
+        buf.copy_from_slice(
+            unsafe {
+                core::slice::from_raw_parts(src_ptr.add(offset), buf.len())
+            }
+        );
+        offset += buf.len();
+    }
 }
