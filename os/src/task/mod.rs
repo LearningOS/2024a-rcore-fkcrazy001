@@ -23,11 +23,13 @@ mod task;
 
 use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
+use crate::mm::{translated_byte_buffer, MapPermission, VirtAddr};
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
+use crate::syscall::process::TaskInfo;
 pub use context::TaskContext;
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 pub use manager::add_task;
@@ -114,4 +116,86 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+/// record current task syscall info
+pub fn record_syscall_info(_syscall_id:usize) {
+    // let mut inner = TASK_MANAGER.inner.exclusive_access();
+    // let current = inner.current_task;
+    // inner.tasks[current].record_syscall_info(syscall_id);
+    todo!()
+}
+
+/// get current task info
+pub fn get_task_info(_taskinfo: &mut TaskInfo) {
+    // let inner = TASK_MANAGER.inner.exclusive_access();
+    // let current = inner.current_task;
+    // let ctx = &inner.tasks[current];
+    // taskinfo.time = get_time_ms() - ctx.run_time;
+    // taskinfo.syscall_times.copy_from_slice(&ctx.syscall_times[..]);
+    // taskinfo.status = TaskStatus::Running;
+    todo!()
+}
+
+/// try to map va to pa on current task
+pub fn try_map_va_range(_start_va: VirtAddr, _end_va: VirtAddr, _perm:MapPermission) -> Result<(),VirtAddr> {
+    // let mut inner = TASK_MANAGER.inner.exclusive_access();
+    // let current = inner.current_task;
+    // let mm_set = &mut inner.tasks[current].memory_set;
+    // for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+    //     if let Some(e) = mm_set.translate(vpn) {
+    //         if e.is_valid() {
+    //             println!("{:?}", vpn);
+    //             return Err(VirtAddr::from(vpn));
+    //         }
+    //     }
+    // }
+    // mm_set.insert_framed_area(start_va, end_va, perm);
+    // // println!("map {:?} -> {:?}", start_va, end_va);
+    // Ok(())
+    todo!()
+}
+
+/// try to unmap va  on current task
+pub fn try_unmap_va_range(_start_va: VirtAddr, _end_va: VirtAddr) -> Result<(),VirtAddr> {
+    // let mut inner = TASK_MANAGER.inner.exclusive_access();
+    // let current = inner.current_task;
+    // let mm_set = &mut inner.tasks[current].memory_set;
+    // for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+    //     match mm_set.translate(vpn) {
+    //         Some(e) => {
+    //             if !e.is_valid() {
+    //               return Err(vpn.into());
+    //             }
+    //         },
+    //         None => {return Err(vpn.into());}
+    //     }
+    // }
+    // if mm_set.shrink_to(start_va, start_va) {
+    //     Ok(())
+    // } else {
+    //     Err(start_va)
+    // }
+    todo!()
+}
+
+/// copy kernel mem to user va
+pub fn copy_km_to_va<T>(km :&T, va: &mut T, len: usize) {
+    let src_ptr:*const u8 = unsafe {
+        core::mem::transmute(km)
+    };
+    let dst_ptr:*const u8 = unsafe {
+        core::mem::transmute(va)
+    };
+    // panic if translate failed
+    let buffers = translated_byte_buffer(current_user_token(), dst_ptr, len);
+    let mut offset = 0;
+    for buf in buffers {
+        buf.copy_from_slice(
+            unsafe {
+                core::slice::from_raw_parts(src_ptr.add(offset), buf.len())
+            }
+        );
+        offset += buf.len();
+    }
 }
