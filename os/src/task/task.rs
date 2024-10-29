@@ -37,6 +37,9 @@ impl TaskControlBlock {
     }
 }
 
+/// big stride
+const BIG_STRIDE:usize = usize::MAX >> 32;
+
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
     pub trap_cx_ppn: PhysPageNum,
@@ -71,10 +74,16 @@ pub struct TaskControlBlockInner {
     pub program_brk: usize,
 
     /// syscall info
-    pub syscall_id: [u32;MAX_SYSCALL_NUM],
+    pub syscall_times: [u32;MAX_SYSCALL_NUM],
 
     /// times
     pub times: usize,
+
+    /// priority
+    pub priority: usize,
+
+    /// stride schedule only
+    pub stride: usize,
 }
  
 impl TaskControlBlockInner {
@@ -125,8 +134,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
-                    syscall_id:[0;MAX_SYSCALL_NUM],
+                    syscall_times:[0;MAX_SYSCALL_NUM],
                     times:0,
+                    priority:10,
+                    stride:0,
                 })
             },
         };
@@ -200,8 +211,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
-                    syscall_id:[0;MAX_SYSCALL_NUM],
+                    syscall_times:[0;MAX_SYSCALL_NUM],
                     times:0,
+                    priority:16,
+                    stride:0,
                 })
             },
         });
@@ -215,6 +228,21 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// spawn a new process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new = Arc::new(Self::new(elf_data));
+        let mut parent_inner: RefMut<'_, TaskControlBlockInner> = self.inner_exclusive_access();
+        new.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        parent_inner.children.push(new.clone());
+        new
+    }
+
+    /// step forward
+    pub fn schedule_step(self: &Arc<Self>) {
+        let mut inner: RefMut<'_, TaskControlBlockInner> = self.inner_exclusive_access();
+        inner.stride += BIG_STRIDE / inner.priority;
     }
 
     /// get pid of process
@@ -249,12 +277,12 @@ impl TaskControlBlock {
     }
     /// record syscall info
     pub fn record_syscall_info(&self, syscall_id:usize) {
-        self.inner_exclusive_access().syscall_id[syscall_id]+=1;
+        self.inner_exclusive_access().syscall_times[syscall_id]+=1;
     }
     /// get syscall inf
     pub fn get_syscall_info(&self) -> &'static [u32] {
         unsafe  {
-            core::slice::from_raw_parts(self.inner_exclusive_access().syscall_id.as_ptr(), MAX_SYSCALL_NUM)
+            core::slice::from_raw_parts(self.inner_exclusive_access().syscall_times.as_ptr(), MAX_SYSCALL_NUM)
         }
     }
     /// set run time
