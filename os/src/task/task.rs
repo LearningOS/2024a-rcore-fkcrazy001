@@ -1,9 +1,10 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -68,8 +69,14 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
-}
 
+    /// syscall info
+    pub syscall_id: [u32;MAX_SYSCALL_NUM],
+
+    /// times
+    pub times: usize,
+}
+ 
 impl TaskControlBlockInner {
     /// get the trap context
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
@@ -118,6 +125,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_id:[0;MAX_SYSCALL_NUM],
+                    times:0,
                 })
             },
         };
@@ -191,6 +200,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_id:[0;MAX_SYSCALL_NUM],
+                    times:0,
                 })
             },
         });
@@ -236,6 +247,29 @@ impl TaskControlBlock {
             None
         }
     }
+    /// record syscall info
+    pub fn record_syscall_info(&self, syscall_id:usize) {
+        self.inner_exclusive_access().syscall_id[syscall_id]+=1;
+    }
+    /// get syscall inf
+    pub fn get_syscall_info(&self) -> &'static [u32] {
+        unsafe  {
+            core::slice::from_raw_parts(self.inner_exclusive_access().syscall_id.as_ptr(), MAX_SYSCALL_NUM)
+        }
+    }
+    /// set run time
+    pub fn set_run_time(&self) {
+        let mut inner = self.inner_exclusive_access();
+        if inner.times == 0 {
+            inner.times = get_time_ms();
+        }
+    }
+    /// get run time
+    pub fn get_run_time(&self) -> usize {
+        let inner = self.inner_exclusive_access();
+        get_time_ms() - inner.times
+    }
+    
 }
 
 #[derive(Copy, Clone, PartialEq)]

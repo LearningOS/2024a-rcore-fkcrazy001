@@ -37,6 +37,8 @@ pub use processor::{
     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
     Processor,
 };
+
+use crate::mm::address::VPNRange;
 /// Suspend the current 'Running' task and run the next task in task list.
 pub fn suspend_current_and_run_next() {
     // There must be an application running.
@@ -119,64 +121,54 @@ pub fn add_initproc() {
 }
 
 /// record current task syscall info
-pub fn record_syscall_info(_syscall_id:usize) {
-    // let mut inner = TASK_MANAGER.inner.exclusive_access();
-    // let current = inner.current_task;
-    // inner.tasks[current].record_syscall_info(syscall_id);
-    todo!()
+pub fn record_syscall_info(syscall_id:usize) {
+    let current = current_task().unwrap();
+    current.record_syscall_info(syscall_id);
 }
 
 /// get current task info
-pub fn get_task_info(_taskinfo: &mut TaskInfo) {
-    // let inner = TASK_MANAGER.inner.exclusive_access();
-    // let current = inner.current_task;
-    // let ctx = &inner.tasks[current];
-    // taskinfo.time = get_time_ms() - ctx.run_time;
-    // taskinfo.syscall_times.copy_from_slice(&ctx.syscall_times[..]);
-    // taskinfo.status = TaskStatus::Running;
-    todo!()
+pub fn get_task_info(taskinfo: &mut TaskInfo) {
+    let current = current_task().unwrap();
+    taskinfo.syscall_times.copy_from_slice(&current.get_syscall_info());
+    taskinfo.time = current.get_run_time();
+    taskinfo.status = TaskStatus::Running;
+    // todo!()
 }
 
 /// try to map va to pa on current task
-pub fn try_map_va_range(_start_va: VirtAddr, _end_va: VirtAddr, _perm:MapPermission) -> Result<(),VirtAddr> {
-    // let mut inner = TASK_MANAGER.inner.exclusive_access();
-    // let current = inner.current_task;
-    // let mm_set = &mut inner.tasks[current].memory_set;
-    // for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
-    //     if let Some(e) = mm_set.translate(vpn) {
-    //         if e.is_valid() {
-    //             println!("{:?}", vpn);
-    //             return Err(VirtAddr::from(vpn));
-    //         }
-    //     }
-    // }
-    // mm_set.insert_framed_area(start_va, end_va, perm);
-    // // println!("map {:?} -> {:?}", start_va, end_va);
-    // Ok(())
-    todo!()
+pub fn try_map_va_range(start_va: VirtAddr, end_va: VirtAddr, perm:MapPermission) -> Result<(),VirtAddr> {
+    let current = current_task().unwrap();
+    let mm_set = &mut current.inner_exclusive_access().memory_set;
+    for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
+        if let Some(e) = mm_set.translate(vpn) {
+            if e.is_valid() {
+                println!("{:?}", vpn);
+                return Err(VirtAddr::from(vpn));
+            }
+        }
+    }
+    mm_set.insert_framed_area(start_va, end_va, perm);
+    // println!("map {:?} -> {:?}", start_va, end_va);
+    Ok(())
 }
 
 /// try to unmap va  on current task
-pub fn try_unmap_va_range(_start_va: VirtAddr, _end_va: VirtAddr) -> Result<(),VirtAddr> {
-    // let mut inner = TASK_MANAGER.inner.exclusive_access();
-    // let current = inner.current_task;
-    // let mm_set = &mut inner.tasks[current].memory_set;
-    // for vpn in VPNRange::new(start_va.floor(), end_va.ceil()) {
-    //     match mm_set.translate(vpn) {
-    //         Some(e) => {
-    //             if !e.is_valid() {
-    //               return Err(vpn.into());
-    //             }
-    //         },
-    //         None => {return Err(vpn.into());}
-    //     }
-    // }
-    // if mm_set.shrink_to(start_va, start_va) {
-    //     Ok(())
-    // } else {
-    //     Err(start_va)
-    // }
-    todo!()
+pub fn try_unmap_va_range(start_va: VirtAddr, end_va: VirtAddr) -> Result<(),VirtAddr> {
+    let current = current_task().unwrap();
+    let mm_set = &mut current.inner_exclusive_access().memory_set;
+    let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
+    for vpn in vpn_range {
+        match mm_set.translate(vpn) {
+            Some(e) => {
+                if !e.is_valid() {
+                  return Err(vpn.into());
+                }
+            },
+            None => {return Err(vpn.into());}
+        }
+    }
+    mm_set.remove_area_with_start_vpn(start_va.into());
+    Ok(())
 }
 
 /// copy kernel mem to user va
