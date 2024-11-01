@@ -1,11 +1,12 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
+use crate::timer::get_time_ms;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -37,6 +38,9 @@ impl TaskControlBlock {
         inner.memory_set.token()
     }
 }
+
+/// big stride
+const BIG_STRIDE:usize = usize::MAX >> 32;
 
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
@@ -71,6 +75,18 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// syscall info
+    pub syscall_times: [u32;MAX_SYSCALL_NUM],
+
+    /// times
+    pub times: usize,
+
+    /// priority
+    pub priority: usize,
+
+    /// stride schedule only
+    pub stride: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +151,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times:[0;MAX_SYSCALL_NUM],
+                    times:0,
+                    priority:10,
+                    stride:0,
                 })
             },
         };
@@ -216,6 +236,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times:[0;MAX_SYSCALL_NUM],
+                    times:0,
+                    priority:10,
+                    stride:0,
                 })
             },
         });
@@ -229,6 +253,21 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// spawn a new process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new = Arc::new(Self::new(elf_data));
+        let mut parent_inner: RefMut<'_, TaskControlBlockInner> = self.inner_exclusive_access();
+        new.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        parent_inner.children.push(new.clone());
+        new
+    }
+
+    /// step forward
+    pub fn schedule_step(self: &Arc<Self>) {
+        let mut inner: RefMut<'_, TaskControlBlockInner> = self.inner_exclusive_access();
+        inner.stride += BIG_STRIDE / inner.priority;
     }
 
     /// get pid of process
@@ -261,6 +300,29 @@ impl TaskControlBlock {
             None
         }
     }
+    /// record syscall info
+    pub fn record_syscall_info(&self, syscall_id:usize) {
+        self.inner_exclusive_access().syscall_times[syscall_id]+=1;
+    }
+    /// get syscall inf
+    pub fn get_syscall_info(&self) -> &'static [u32] {
+        unsafe  {
+            core::slice::from_raw_parts(self.inner_exclusive_access().syscall_times.as_ptr(), MAX_SYSCALL_NUM)
+        }
+    }
+    /// set run time
+    pub fn set_run_time(&self) {
+        let mut inner = self.inner_exclusive_access();
+        if inner.times == 0 {
+            inner.times = get_time_ms();
+        }
+    }
+    /// get run time
+    pub fn get_run_time(&self) -> usize {
+        let inner = self.inner_exclusive_access();
+        get_time_ms() - inner.times
+    }
+    
 }
 
 #[derive(Copy, Clone, PartialEq)]

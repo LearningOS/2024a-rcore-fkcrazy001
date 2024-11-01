@@ -1,7 +1,8 @@
 //!Implementation of [`TaskManager`]
+
 use super::TaskControlBlock;
 use crate::sync::UPSafeCell;
-use alloc::collections::VecDeque;
+use alloc::collections::vec_deque::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
 ///A array of `TaskControlBlock` that is thread-safe
@@ -23,8 +24,25 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
-    }
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        let mut index = 0;
+        let mut min_stride = usize::MAX;
+        for (i, tcb) in self.ready_queue.iter().enumerate() {
+            let t_stride  = tcb.inner_exclusive_access().stride;
+            if t_stride < min_stride {
+                index = i;
+                min_stride = t_stride;
+            }
+        }
+        if let Some(a) = self.ready_queue.drain(index..=index).last() {
+            a.schedule_step();
+            Some(a)
+        } else {
+            None
+        }
+}
 }
 
 lazy_static! {
