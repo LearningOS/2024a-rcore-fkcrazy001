@@ -21,6 +21,7 @@ mod task;
 
 use self::id::TaskUserRes;
 use crate::fs::{open_file, OpenFlags};
+use crate::mm::translated_byte_buffer;
 use crate::task::manager::add_stopping_task;
 use crate::timer::remove_timer;
 use alloc::{sync::Arc, vec::Vec};
@@ -203,4 +204,25 @@ pub fn remove_inactive_task(task: Arc<TaskControlBlock>) {
     remove_task(Arc::clone(&task));
     trace!("kernel: remove_inactive_task .. remove_timer");
     remove_timer(Arc::clone(&task));
+}
+
+/// copy kernel mem to user va
+pub fn copy_km_to_va<T>(km :&T, va: &mut T, len: usize) {
+    let src_ptr:*const u8 = unsafe {
+        core::mem::transmute(km)
+    };
+    let dst_ptr:*const u8 = unsafe {
+        core::mem::transmute(va)
+    };
+    // panic if translate failed
+    let buffers = translated_byte_buffer(current_user_token(), dst_ptr, len);
+    let mut offset = 0;
+    for buf in buffers {
+        buf.copy_from_slice(
+            unsafe {
+                core::slice::from_raw_parts(src_ptr.add(offset), buf.len())
+            }
+        );
+        offset += buf.len();
+    }
 }
